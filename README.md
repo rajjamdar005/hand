@@ -32,8 +32,8 @@ handwritten_solver/
 1. Clone the repository:
 
 ```bash
-git clone <repository-url>
-cd handwritten-equation-solver
+git clone https://github.com/rajjamdar005/hand
+cd hand
 ```
 
 2. Create a virtual environment and activate it:
