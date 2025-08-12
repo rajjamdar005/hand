@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Equation Result - Handwritten Equation Solver</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+    <div class="container mt-5">
+        <div class="row justify-content-center">
+            <div class="col-md-8">
+                <div class="card shadow">
+                    <div class="card-header bg-primary text-white">
+                        <h1 class="text-center mb-0">Equation Result</h1>
+                    </div>
+                    <div class="card-body">
+                        <div class="row mb-4">
+                            <div class="col-md-6">
+                                <div class="card">
+                                    <div class="card-header">Original Image</div>
+                                    <div class="card-body text-center">
+                                        <img src="{{ url_for('static', filename=original_image.replace('static/', '')) }}" class="img-fluid" alt="Original Image">
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="card">
+                                    <div class="card-header">Preprocessed Image</div>
+                                    <div class="card-body text-center">
+                                        <img src="{{ url_for('static', filename=preprocessed_image.replace('static/', '')) }}" class="img-fluid" alt="Preprocessed Image">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="card mb-4">
+                            <div class="card-header d-flex justify-content-between align-items-center">
+                                <span>Recognized Equation</span>
+                                {% if confidence %}
+                                    <span class="badge {% if confidence < 70 %}bg-danger{% elif confidence < 90 %}bg-warning{% else %}bg-success{% endif %}">
+                                        Confidence: {{ confidence|round(1) }}%
+                                    </span>
+                                {% endif %}
+                            </div>
+                            <div class="card-body">
+                                <div class="alert {% if confidence and confidence < 70 %}alert-danger{% elif error %}alert-danger{% else %}alert-info{% endif %}">
+                                    <h3 class="text-center">{{ equation }}</h3>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="card mb-4">
+                            <div class="card-header">Solution</div>
+                            <div class="card-body">
+                                {% if error %}
+                                    <div class="alert alert-danger">
+                                        <p>{{ error }}</p>
+                                    </div>
+                                {% elif result is none %}
+                                    <div class="alert alert-warning">
+                                        <p>No solution found.</p>
+                                    </div>
+                                {% else %}
+                                    <div class="alert alert-success">
+                                        {% if result is iterable and result is not string %}
+                                            {% for sol in result %}
+                                                <h3 class="text-center">x = {{ sol }}</h3>
+                                            {% endfor %}
+                                        {% else %}
+                                            <h3 class="text-center">{{ result }}</h3>
+                                        {% endif %}
+                                    </div>
+                                {% endif %}
+                            </div>
+                        </div>
+                        
+                        <div class="text-center">
+                            <a href="{{ url_for('index') }}" class="btn btn-primary">Solve Another Equation</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
