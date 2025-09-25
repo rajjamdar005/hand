@@ -1,7 +1,14 @@
 from flask import Flask, render_template, request, redirect, url_for, flash
 import os
 import uuid
-from utils import preprocess_image, extract_equation, solve_equation
+
+# Toggle debug mode - set to False for production
+DEBUG_MODE = False
+
+if DEBUG_MODE:
+    from utils import preprocess_image, extract_equation, solve_equation
+else:
+    from utils_enhanced import preprocess_image, extract_equation, solve_equation
 
 app = Flask(__name__)
 app.secret_key = 'handwritten_equation_solver'
@@ -32,25 +39,36 @@ def upload_file():
         flash('No selected file')
         return redirect(request.url)
     
-    if file:
+    if file and file.filename:
+        # Check if file is an image
+        allowed_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp'}
+        file_ext = os.path.splitext(file.filename)[1].lower()
+        
+        if file_ext not in allowed_extensions:
+            flash('Please upload a valid image file (jpg, png, gif, bmp, tiff, webp)')
+            return redirect(request.url)
+        
         # Generate unique filename to prevent overwriting
-        filename = str(uuid.uuid4()) + os.path.splitext(file.filename)[1]
+        filename = str(uuid.uuid4()) + file_ext
         file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         file.save(file_path)
         
         try:
-            # Preprocess the image
-            preprocessed_image_path = preprocess_image(file_path)
+            # Preprocess the image (now returns multiple versions)
+            preprocessed_paths = preprocess_image(file_path)
             
-            # Extract equation text using OCR
-            equation_text, confidence = extract_equation(preprocessed_image_path)
+            # Extract equation text using OCR (tries all preprocessed versions)
+            equation_text, confidence = extract_equation(preprocessed_paths)
             
             # Solve the equation
             result, error = solve_equation(equation_text)
             
+            # Use the first preprocessed image for display
+            display_preprocessed = preprocessed_paths[0] if preprocessed_paths else file_path
+            
             return render_template('result.html', 
-                                   original_image=file_path,
-                                   preprocessed_image=preprocessed_image_path,
+                                   original_image=file_path.replace('\\', '/'),
+                                   preprocessed_image=display_preprocessed.replace('\\', '/'),
                                    equation=equation_text,
                                    result=result,
                                    error=error,
@@ -85,13 +103,16 @@ def canvas_upload():
         image.save(file_path)
         
         # Process the image as with file upload
-        preprocessed_image_path = preprocess_image(file_path)
-        equation_text, confidence = extract_equation(preprocessed_image_path)
+        preprocessed_paths = preprocess_image(file_path)
+        equation_text, confidence = extract_equation(preprocessed_paths)
         result, error = solve_equation(equation_text)
         
+        # Use the first preprocessed image for display
+        display_preprocessed = preprocessed_paths[0] if preprocessed_paths else file_path
+        
         return render_template('result.html', 
-                               original_image=file_path,
-                               preprocessed_image=preprocessed_image_path,
+                               original_image=file_path.replace('\\', '/'),
+                               preprocessed_image=display_preprocessed.replace('\\', '/'),
                                equation=equation_text,
                                result=result,
                                error=error,

@@ -19,14 +19,10 @@ def preprocess_image(image_path):
     Returns:
         Path to the preprocessed image
     """
-    print(f"[DEBUG] Preprocessing image: {image_path}")
-    
     # Read the image
     image = cv2.imread(image_path)
     if image is None:
         raise ValueError(f"Could not read image at {image_path}")
-    
-    print(f"[DEBUG] Original image shape: {image.shape}")
     
     # Convert to grayscale
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -41,8 +37,6 @@ def preprocess_image(image_path):
         new_width = int(width * scale_factor)
         new_height = int(height * scale_factor)
         gray = cv2.resize(gray, (new_width, new_height), interpolation=cv2.INTER_CUBIC)
-    
-    print(f"[DEBUG] Resized image shape: {gray.shape}")
     
     # Apply denoising
     denoised = cv2.medianBlur(gray, 3)
@@ -68,7 +62,6 @@ def preprocess_image(image_path):
     preprocessed_path = os.path.splitext(image_path)[0] + '_preprocessed.png'
     cv2.imwrite(preprocessed_path, binary)
     
-    print(f"[DEBUG] Preprocessed image saved: {preprocessed_path}")
     return preprocessed_path
 
 def extract_equation(image_path):
@@ -81,21 +74,15 @@ def extract_equation(image_path):
     Returns:
         tuple: (equation_text, confidence)
     """
-    print(f"[DEBUG] Processing image: {image_path}")
-    
     # Check if image file exists and is readable
     if not os.path.exists(image_path):
-        print(f"[ERROR] Image file not found: {image_path}")
         return "", 0
     
     try:
         # Load image for OCR
         image = cv2.imread(image_path)
         if image is None:
-            print(f"[ERROR] Could not load image: {image_path}")
             return "", 0
-            
-        print(f"[DEBUG] Image loaded successfully. Shape: {image.shape}")
         
         # Try multiple OCR configurations
         configs = [
@@ -114,7 +101,6 @@ def extract_equation(image_path):
             try:
                 # Try simple OCR first
                 simple_text = pytesseract.image_to_string(image, config=config).strip()
-                print(f"[DEBUG] Config {i+1} simple result: '{simple_text}'")
                 
                 if simple_text and len(simple_text) > len(best_text):
                     best_text = simple_text
@@ -133,21 +119,17 @@ def extract_equation(image_path):
                 if texts:
                     combined_text = " ".join(texts)
                     avg_conf = sum(confidences) / len(confidences)
-                    print(f"[DEBUG] Config {i+1} detailed result: '{combined_text}' (confidence: {avg_conf:.1f})")
                     
                     if avg_conf > best_confidence or (avg_conf >= best_confidence and len(combined_text) > len(best_text)):
                         best_text = combined_text
                         best_confidence = avg_conf
                         
-            except Exception as e:
-                print(f"[DEBUG] Config {i+1} failed: {e}")
+            except Exception:
                 continue
         
         if not best_text:
-            print(f"[DEBUG] No text detected by any OCR configuration")
             return "", 0
-            
-        print(f"[DEBUG] Best OCR result: '{best_text}' (confidence: {best_confidence:.1f})")
+        
         # Clean and format the extracted text
         equation_text = clean_equation_text(best_text)
         
@@ -155,8 +137,7 @@ def extract_equation(image_path):
         
     except pytesseract.pytesseract.TesseractNotFoundError:
         raise Exception(r"C:\Program Files\Tesseract-OCR\tesseract.exe is not installed or it's not in your PATH. See README file for more information.")
-    except Exception as e:
-        print(f"[ERROR] OCR processing failed: {e}")
+    except Exception:
         return "", 0
 
 def clean_equation_text(text):
@@ -174,8 +155,6 @@ def clean_equation_text(text):
     """
     if not text:
         return ""
-        
-    print(f"[DEBUG] Cleaning text: '{text}'")
     
     # Remove extra spaces
     text = " ".join(text.split())
@@ -239,7 +218,6 @@ def clean_equation_text(text):
     if text.endswith('.'):
         text = text[:-1]
     
-    print(f"[DEBUG] Cleaned text result: '{text}'")
     return text
 
 def solve_equation(equation_text):
