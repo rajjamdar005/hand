@@ -13,11 +13,10 @@ def preprocess_image(image_path):
     """
     Enhanced preprocessing for better OCR results:
     1. Convert to grayscale
-    2. Resize (3x upscaling for better detail)
-    3. Apply noise reduction
-    4. Apply adaptive thresholding
-    5. Apply morphological operations to enhance text
-    6. Apply dilation to connect broken strokes
+    2. Resize for optimal OCR (scale up small images, ensure minimum size)
+    3. Apply denoising
+    4. Apply thresholding
+    5. Morphological operations to clean up
     
     Args:
         image_path: Path to the input image
@@ -25,43 +24,56 @@ def preprocess_image(image_path):
     Returns:
         Path to the preprocessed image
     """
+    print(f"[DEBUG] Preprocessing image: {image_path}")
+    
     # Read the image
     image = cv2.imread(image_path)
     if image is None:
         raise ValueError(f"Could not read image at {image_path}")
     
+    print(f"[DEBUG] Original image shape: {image.shape}")
+    
     # Convert to grayscale
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     
-    # Resize (3x upscaling for better detail)
+    # Resize for better OCR (scale up small images, ensure minimum size)
     height, width = gray.shape
-    gray = cv2.resize(gray, (width * 3, height * 3), interpolation=cv2.INTER_CUBIC)
+    min_height, min_width = 200, 400
     
-    # Apply CLAHE for contrast enhancement
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-    enhanced = clahe.apply(gray)
+    if height < min_height or width < min_width:
+        # Scale up small images
+        scale_factor = max(min_height / height, min_width / width, 2.0)
+        new_width = int(width * scale_factor)
+        new_height = int(height * scale_factor)
+        gray = cv2.resize(gray, (new_width, new_height), interpolation=cv2.INTER_CUBIC)
     
-    # Apply bilateral filter for noise reduction while preserving edges
-    filtered = cv2.bilateralFilter(enhanced, 9, 75, 75)
+    print(f"[DEBUG] Resized image shape: {gray.shape}")
     
-    # Apply adaptive thresholding to get a binary image
-    binary = cv2.adaptiveThreshold(
-        filtered, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2
+    # Apply denoising
+    denoised = cv2.medianBlur(gray, 3)
+    
+    # Try multiple thresholding approaches and pick the best
+    # 1. Adaptive thresholding
+    adaptive = cv2.adaptiveThreshold(
+        denoised, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2
     )
     
-    # Apply morphological operations to enhance text
-    kernel = np.ones((2, 2), np.uint8)
+    # 2. Otsu's thresholding
+    _, otsu = cv2.threshold(denoised, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     
-    # Opening operation to remove small noise
-    opening = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel, iterations=1)
+    # Use adaptive for most cases, as it handles varying lighting better
+    binary = adaptive
     
-    # Dilation to connect broken strokes
-    dilation = cv2.dilate(opening, kernel, iterations=2) # Increased iterations for better connection
+    # Morphological operations to clean up noise
+    kernel = np.ones((2,2), np.uint8)
+    binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+    binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
     
     # Save the preprocessed image
     preprocessed_path = os.path.splitext(image_path)[0] + '_preprocessed.png'
-    cv2.imwrite(preprocessed_path, dilation)
+    cv2.imwrite(preprocessed_path, binary)
     
+    print(f"[DEBUG] Preprocessed image saved: {preprocessed_path}")
     return preprocessed_path
 
 def extract_equation(image_path):
@@ -74,39 +86,83 @@ def extract_equation(image_path):
     Returns:
         tuple: (equation_text, confidence)
     """
-    # OCR configuration for math equations - expanded character set
-    custom_config = r'--oem 3 --psm 11 -c tessedit_char_whitelist="0123456789+-*/()=xXyYzZ^.√πesin cos tan log ln" '
+    print(f"[DEBUG] Processing image: {image_path}")
     
-    # Define a confidence threshold
-    CONFIDENCE_THRESHOLD = 0  # Lowered to accept all valid text including confidence 0
-
-    try:
-        # Perform OCR
-        ocr_data = pytesseract.image_to_data(cv2.imread(image_path), config=custom_config, output_type=pytesseract.Output.DICT)
-        logger.debug(f"OCR Data: {ocr_data}") # Debug log
-    except pytesseract.pytesseract.TesseractNotFoundError:
-        raise Exception(r"C:\Program Files\Tesseract-OCR\tesseract.exe is not installed or it's not in your PATH. See README file for more information.")
-    
-    # Extract text and confidence, filtering by confidence threshold
-    texts = [word for word, conf in zip(ocr_data['text'], ocr_data['conf']) if word.strip()]
-    confidences = [conf for word, conf in zip(ocr_data['text'], ocr_data['conf']) if word.strip()]
-    logger.debug(f"Filtered Texts: {texts}") # Debug log
-    logger.debug(f"Filtered Confidences: {confidences}") # Debug log
-    
-    if not texts:
-        logger.debug("No texts detected after filtering.") # Debug log
+    # Check if image file exists and is readable
+    if not os.path.exists(image_path):
+        print(f"[ERROR] Image file not found: {image_path}")
         return "", 0
     
-    # Join all detected text parts
-    equation_text = " ".join(texts)
-    avg_confidence = sum(confidences) / len(confidences) if confidences else 0
-    logger.debug(f"Joined Equation Text (before cleaning): {equation_text}") # Debug log
-    
-    # Clean and format the extracted text
-    equation_text = clean_equation_text(equation_text)
-    logger.debug(f"Cleaned Equation Text: {equation_text}") # Debug log
-    
-    return equation_text, avg_confidence
+    try:
+        # Load image for OCR
+        image = cv2.imread(image_path)
+        if image is None:
+            print(f"[ERROR] Could not load image: {image_path}")
+            return "", 0
+            
+        print(f"[DEBUG] Image loaded successfully. Shape: {image.shape}")
+        
+        # Try multiple OCR configurations
+        configs = [
+            '--oem 3 --psm 8 -c tessedit_char_whitelist=0123456789+-*/()=xX^.-',  # Single word
+            '--oem 3 --psm 7 -c tessedit_char_whitelist=0123456789+-*/()=xX^.-',  # Single text line
+            '--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789+-*/()=xX^.-',  # Uniform block
+            '--oem 3 --psm 13 -c tessedit_char_whitelist=0123456789+-*/()=xX^.-', # Raw line
+            '--oem 3 --psm 8',  # Single word, no whitelist
+            '--oem 3 --psm 7',  # Single text line, no whitelist
+        ]
+        
+        best_text = ""
+        best_confidence = 0
+        
+        for i, config in enumerate(configs):
+            try:
+                # Try simple OCR first
+                simple_text = pytesseract.image_to_string(image, config=config).strip()
+                print(f"[DEBUG] Config {i+1} simple result: '{simple_text}'")
+                
+                if simple_text and len(simple_text) > len(best_text):
+                    best_text = simple_text
+                    
+                # Try detailed OCR
+                ocr_data = pytesseract.image_to_data(image, config=config, output_type=pytesseract.Output.DICT)
+                
+                # Extract non-empty text with confidence
+                texts = []
+                confidences = []
+                for j, word in enumerate(ocr_data['text']):
+                    if word.strip() and ocr_data['conf'][j] > 0:
+                        texts.append(word.strip())
+                        confidences.append(ocr_data['conf'][j])
+                
+                if texts:
+                    combined_text = " ".join(texts)
+                    avg_conf = sum(confidences) / len(confidences)
+                    print(f"[DEBUG] Config {i+1} detailed result: '{combined_text}' (confidence: {avg_conf:.1f})")
+                    
+                    if avg_conf > best_confidence or (avg_conf >= best_confidence and len(combined_text) > len(best_text)):
+                        best_text = combined_text
+                        best_confidence = avg_conf
+                        
+            except Exception as e:
+                print(f"[DEBUG] Config {i+1} failed: {e}")
+                continue
+        
+        if not best_text:
+            print(f"[DEBUG] No text detected by any OCR configuration")
+            return "", 0
+            
+        print(f"[DEBUG] Best OCR result: '{best_text}' (confidence: {best_confidence:.1f})")
+        # Clean and format the extracted text
+        equation_text = clean_equation_text(best_text)
+        
+        return equation_text, best_confidence
+        
+    except pytesseract.pytesseract.TesseractNotFoundError:
+        raise Exception(r"C:\Program Files\Tesseract-OCR\tesseract.exe is not installed or it's not in your PATH. See README file for more information.")
+    except Exception as e:
+        print(f"[ERROR] OCR processing failed: {e}")
+        return "", 0
 
 def clean_equation_text(text):
     """
@@ -121,6 +177,11 @@ def clean_equation_text(text):
     Returns:
         Cleaned equation text
     """
+    if not text:
+        return ""
+        
+    print(f"[DEBUG] Cleaning text: '{text}'")
+    
     # Remove extra spaces
     text = " ".join(text.split())
     
@@ -129,71 +190,77 @@ def clean_equation_text(text):
     # Handle common OCR mistakes and mathematical symbols more carefully
     # Only replace characters that are clearly OCR errors in mathematical context
     
-    # Replace specific mathematical symbols
-    replacements = {
-        '÷': '/',  # Replace division symbol with slash
-        '×': '*',  # Replace multiplication symbol with asterisk
-        '^': '**',  # Replace caret with double asterisk for power
-        'π': 'pi',  # Replace pi symbol with 'pi'
-        '√': 'sqrt',  # Replace square root symbol with 'sqrt'
-        '"': '',   # Remove quotes
-        "'": '',   # Remove single quotes
-        '_': '-',    # Replace underscore with hyphen
-        ' ': '',     # Remove spaces
-    }
+    # Check if text contains function calls that need special handling
+    has_functions = any(func in text.lower() for func in ['integrate', 'limit', 'minimize', 'maximize', 'mean', 'std'])
     
-    # Protect function arguments from comma replacement
-    import re
-    
-    def protect_function_args(text):
-        """Protect commas in function arguments, handling nested parentheses"""
-        # Pattern to match function calls with their arguments, handling nested parentheses
-        # This uses a more sophisticated approach to handle nested structures
-        result = text
+    if has_functions:
+        # For function calls, be more careful with replacements
+        # Only replace safe characters that won't break function syntax
+        safe_replacements = {
+            '÷': '/',   # Replace division symbol with slash
+            '×': '*',   # Replace multiplication symbol with asterisk
+            '·': '*',   # Replace middle dot with asterisk
+            '^': '**',  # Replace caret with double asterisk for power
+            'π': 'pi',  # Replace pi symbol with 'pi'
+            '√': 'sqrt',  # Replace square root symbol with 'sqrt'
+            '"': '',    # Remove quotes
+            "'": '',    # Remove single quotes
+            '`': '',    # Remove backticks
+            '_': '',    # Remove underscores (often OCR noise)
+            '—': '-',   # Replace em-dash with minus
+            '–': '-',   # Replace en-dash with minus
+            '−': '-',   # Replace Unicode minus with regular minus
+            '‐': '-',   # Replace hyphen with minus
+            '‑': '-',   # Replace non-breaking hyphen with minus
+        }
         
-        # Find all potential function calls (word followed by opening parenthesis)
-        function_starts = list(re.finditer(r'\b(\w+)\s*\(', text))
+        # Apply only safe replacements for function calls
+        for old, new in safe_replacements.items():
+            text = text.replace(old, new)
+    else:
+        # For non-function text, apply all replacements including OCR fixes
+        full_replacements = {
+            'O': '0',   # Replace O with 0
+            'o': '0',   # Replace o with 0
+            'l': '1',   # Replace l with 1
+            'I': '1',   # Replace I with 1
+            'S': '5',   # Replace S with 5 (common mistake)
+            'Z': '2',   # Replace Z with 2 (sometimes)
+            'g': '9',   # Replace g with 9
+            ',': '.',   # Replace comma with decimal point
+            '÷': '/',   # Replace division symbol with slash
+            '×': '*',   # Replace multiplication symbol with asterisk
+            '·': '*',   # Replace middle dot with asterisk
+            '^': '**',  # Replace caret with double asterisk for power
+            'π': 'pi',  # Replace pi symbol with 'pi'
+            '√': 'sqrt',  # Replace square root symbol with 'sqrt'
+            '"': '',    # Remove quotes
+            "'": '',    # Remove single quotes
+            '`': '',    # Remove backticks
+            '_': '',    # Remove underscores (often OCR noise)
+            '|': '1',   # Replace pipe with 1
+            'T': '7',   # Replace T with 7 (sometimes)
+            '—': '-',   # Replace em-dash with minus
+            '–': '-',   # Replace en-dash with minus
+            '−': '-',   # Replace Unicode minus with regular minus
+            '‐': '-',   # Replace hyphen with minus
+            '‑': '-',   # Replace non-breaking hyphen with minus
+            ' ': '',    # Remove spaces
+        }
         
-        # Process from right to left to avoid index shifting issues
-        for match in reversed(function_starts):
-            func_name = match.group(1)
-            start_pos = match.end() - 1  # Position of the opening parenthesis
-            
-            # Find the matching closing parenthesis
-            paren_count = 0
-            end_pos = start_pos
-            for i in range(start_pos, len(text)):
-                if text[i] == '(':
-                    paren_count += 1
-                elif text[i] == ')':
-                    paren_count -= 1
-                    if paren_count == 0:
-                        end_pos = i
-                        break
-            
-            if end_pos > start_pos:
-                # Extract the arguments
-                args = text[start_pos + 1:end_pos]
-                # Protect commas in the arguments
-                protected_args = args.replace(',', '__COMMA__')
-                # Replace in the result
-                result = result[:start_pos + 1] + protected_args + result[end_pos:]
-        
-        return result
+        for old, new in full_replacements.items():
+            text = text.replace(old, new)
     
-    # Apply protection
-    text = protect_function_args(text)
+    # Add explicit multiplication between numbers and variables
+    text = add_explicit_multiplication(text)
     
-    # Only replace comma with dot if it's not in a matrix context
-    # Check if this looks like a matrix (contains [[ and ]])
-    if not ('[[' in text and ']]' in text):
-        text = text.replace(',', '.')  # Replace comma with decimal point only for non-matrix expressions
+    # Ensure X is lowercase for consistency
+    text = text.replace('X', 'x')
     
-    # Restore protected commas in function arguments
-    text = text.replace('__COMMA__', ',')
+    # Remove trailing periods
+    text = text.rstrip('.')
     
-    for old, new in replacements.items():
-        text = text.replace(old, new)
+    return text
     
     # Handle common character confusions more carefully
     # Only replace if it makes sense in mathematical context
@@ -202,6 +269,19 @@ def clean_equation_text(text):
     text = re.sub(r'(?<!\w)[lI](?!\w)', '1', text)   # l/I -> 1 when standalone  
     text = re.sub(r'(?<!\w)[Ss](?!\w)', '5', text)  # S -> 5 when standalone
     text = re.sub(r'(?<!\w)[Zz](?!\w)', '2', text)  # Z -> 2 when standalone
+    
+    # Handle spaces between numbers and variables (e.g., "x 11" should be "x*11")
+    # Add multiplication between variable and number (e.g., "x 2" becomes "x*2")
+    text = re.sub(r'([a-zA-Z])\s*(\d)', r'\1*\2', text)
+    
+    # Add multiplication between number and variable (e.g., "2 x" becomes "2*x")
+    text = re.sub(r'(\d)\s*([a-zA-Z])', r'\1*\2', text)
+    
+    # Handle cases like "2x" -> "2*x" (no space between number and variable)
+    text = re.sub(r'(\d)([a-zA-Z])', r'\1*\2', text)
+    
+    # Remove any remaining spaces
+    text = text.replace(" ", "")
     
     # Ensure 'x' is lowercase for sympy (but preserve function names)
     # Only replace standalone X, not in function names
@@ -214,6 +294,7 @@ def clean_equation_text(text):
     # Add explicit multiplication operators for implicit multiplication
     text = add_explicit_multiplication(text)
     
+    print(f"[DEBUG] Cleaned text result: '{text}'")
     return text
 
 def add_explicit_multiplication(text):
