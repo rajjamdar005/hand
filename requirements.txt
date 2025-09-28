@@ -3,4 +3,6 @@ opencv-python
 pytesseract
 sympy
 numpy
+scipy
 Pillow
+google-generativeai
